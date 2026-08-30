@@ -37,9 +37,13 @@ On a **~16 GiB** host, `init-env` / `preflight` force
 `make preflight` **fails** when a check cannot run. It never parses
 `ss` / `netstat`.
 
-1. **iptables nft + legacy.** If `iptables-nft FORWARD=ACCEPT` but
-   `iptables-legacy FORWARD=DROP`, containers look `Up` while they time out
-   talking to their own database. Fix:
+1. **iptables nft + legacy.** Preflight reads FORWARD unprivileged first,
+   then retries with `sudo` on `Permission denied` / `must be root` /
+   `xtables.lock`. If sudo also cannot read the policy, the check fails.
+   `nft FORWARD=DROP` plus `DOCKER-USER` / `DOCKER-FORWARD` is normal
+   (Docker-managed) and is not a failure. Do not flip that policy.
+   The real pitfall is `nft FORWARD=ACCEPT` and `legacy FORWARD=DROP`
+   (containers look `Up` but time out talking to their own database):
 
    ```bash
    sudo iptables-legacy -P FORWARD ACCEPT
