@@ -9,7 +9,7 @@ OPS  := $(ROOT)/ops
 
 .PHONY: help preflight init-env up down status backup restore \
 	up-ragflow up-khoj down-ragflow down-khoj logs logs-ragflow logs-khoj \
-	check-lib
+	check-lib test-backup
 
 help:
 	@printf '%s\n' \
@@ -32,6 +32,11 @@ check-lib:
 	@bash -n "$(OPS)/lib.sh"
 	@# shellcheck disable=SC1091
 	@bash -c 'source "$(OPS)/lib.sh" && assert_tcp_probe_available && ok "lib.sh + /dev/tcp probe are usable"'
+
+test-backup:
+	@bash -n "$(OPS)/backup.sh" "$(OPS)/restore.sh"
+	@$(OPS)/backup.sh --self-test
+	@$(OPS)/restore.sh --self-test
 
 preflight:
 	@$(OPS)/preflight.sh

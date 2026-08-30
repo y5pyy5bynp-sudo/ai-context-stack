@@ -223,3 +223,42 @@ project_owns_port() {
 utc_stamp() {
   date -u +%Y%m%dT%H%M%SZ
 }
+
+# Named volumes this pack owns (explicit `name:` in compose files).
+ragflow_volume_names() {
+  printf '%s\n' \
+    ragflow_esdata01 \
+    ragflow_mysql_data \
+    ragflow_minio_data \
+    ragflow_redis_data \
+    ragflow_osdata01 \
+    ragflow_infinity_data \
+    ragflow_serenedb_data \
+    ragflow_ob_data \
+    ragflow_seekdb_data \
+    ragflow_tei_data \
+    ragflow_kibana_data \
+    ragflow_nats_data \
+    ragflow_clickhouse_data
+}
+
+khoj_volume_names() {
+  printf '%s\n' khoj_config khoj_db khoj_models khoj_search
+}
+
+# Archive a directory tree the same way volume backups are stored.
+archive_dir() {
+  local src="$1" dest_tar="$2"
+  require_cmd tar
+  mkdir -p "$(dirname "${dest_tar}")"
+  tar -C "${src}" -czf "${dest_tar}" .
+}
+
+extract_dir() {
+  local dest="$1" src_tar="$2"
+  require_cmd tar
+  mkdir -p "${dest}"
+  # Clear destination so restore is a real replace, not a merge.
+  find "${dest}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  tar -C "${dest}" -xzf "${src_tar}"
+}
