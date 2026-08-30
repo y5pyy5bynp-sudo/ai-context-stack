@@ -37,13 +37,13 @@ fi
 
 log()  { printf '%s\n' "$*"; }
 ok()   { printf '%sOK%s  %s\n' "${_c_grn}" "${_c_off}" "$*"; }
-warn() { printf '%sWARN%s %s\n' "${_c_yel}" "${_c_off}" "$*" >&2; }
+warn() { printf '%sWARN%s %s\n' "${_c_yel}" "${_c_off}" "$*"; }
 fail() {
-  printf '%sFAIL%s %s\n' "${_c_red}" "${_c_off}" "$*" >&2
+  printf '%sFAIL%s %s\n' "${_c_red}" "${_c_off}" "$*"
   return 1
 }
 die() {
-  printf '%sFAIL%s %s\n' "${_c_red}" "${_c_off}" "$*" >&2
+  printf '%sFAIL%s %s\n' "${_c_red}" "${_c_off}" "$*"
   exit 1
 }
 
