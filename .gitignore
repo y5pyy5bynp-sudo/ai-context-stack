@@ -1,0 +1,16 @@
+# Generated secrets — never commit real .env files
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Runtime data and backups
+/backups/
+**/ragflow-logs/
+*.tar
+*.tar.gz
+
+# Editor / OS junk
+.DS_Store
+*.swp
+*~
