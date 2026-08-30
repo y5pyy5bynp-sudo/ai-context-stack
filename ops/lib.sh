@@ -204,11 +204,15 @@ project_owns_port() {
   if [[ -z "${ids}" ]]; then
     return 1
   fi
-  local id bindings
+  local id bindings rc
   for id in ${ids}; do
-    bindings="$(docker inspect -f '{{range $p, $conf := .NetworkSettings.Ports}}{{range $conf}}{{.HostPort}} {{end}}{{end}}' "${id}" 2>/dev/null || true)"
-    if [[ -z "${bindings}" ]]; then
-      die "docker inspect failed or returned empty port bindings for ${id}; cannot decide who owns :${port}"
+    rc=0
+    set +e
+    bindings="$(docker inspect -f '{{range $p, $conf := .NetworkSettings.Ports}}{{range $conf}}{{.HostPort}} {{end}}{{end}}' "${id}" 2>&1)"
+    rc=$?
+    set -e
+    if [[ "${rc}" -ne 0 ]]; then
+      die "docker inspect failed for ${id}; cannot decide who owns :${port}: ${bindings}"
     fi
     local b
     for b in ${bindings}; do

@@ -24,6 +24,7 @@ help:
 	  '  make status        Compose ps + TCP probes' \
 	  '  make backup        Snapshot volumes + .env into backups/<utc>/' \
 	  '  make restore BACKUP=backups/<utc>   Restore after auto-backup of current state' \
+	  '  make test-backup   Prove archive/extract without Docker' \
 	  '  make logs          Tail both stacks' \
 	  '' \
 	  'Stacks never share compose project, network, volumes, or host ports.'
