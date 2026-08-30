@@ -1,0 +1,95 @@
+# Vendored from https://github.com/khoj-ai/khoj/blob/61cb2d5b7e3349fdd6d06c92aa26b46fb8c9966d/docker-compose.yml
+# Local changes:
+#   - compose project name: khoj
+#   - computer service and khoj_computer volume removed
+#   - dedicated network khoj_isolated
+#   - secrets and host port come from .env (KHOJ_HTTP_PORT=42110)
+#   - no host publish except the web UI
+
+name: khoj
+
+services:
+  database:
+    image: docker.io/pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - khoj_db:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - khoj
+    restart: unless-stopped
+
+  sandbox:
+    image: ghcr.io/khoj-ai/terrarium:latest
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 2
+    networks:
+      - khoj
+    restart: unless-stopped
+
+  search:
+    image: docker.io/searxng/searxng:latest
+    volumes:
+      - khoj_search:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    networks:
+      - khoj
+    restart: unless-stopped
+
+  server:
+    depends_on:
+      database:
+        condition: service_healthy
+    image: ${KHOJ_IMAGE:-ghcr.io/khoj-ai/khoj:latest}
+    ports:
+      - "${KHOJ_HTTP_PORT:-42110}:42110"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    working_dir: /app
+    volumes:
+      - khoj_config:/root/.khoj/
+      - khoj_models:/root/.cache/torch/sentence_transformers
+      - khoj_models:/root/.cache/huggingface
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=${POSTGRES_HOST:-database}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - KHOJ_DJANGO_SECRET_KEY=${KHOJ_DJANGO_SECRET_KEY}
+      - KHOJ_DEBUG=${KHOJ_DEBUG:-False}
+      - KHOJ_ADMIN_EMAIL=${KHOJ_ADMIN_EMAIL}
+      - KHOJ_ADMIN_PASSWORD=${KHOJ_ADMIN_PASSWORD}
+      - KHOJ_TERRARIUM_URL=${KHOJ_TERRARIUM_URL:-http://sandbox:8080}
+      - KHOJ_SEARXNG_URL=${KHOJ_SEARXNG_URL:-http://search:8080}
+      - KHOJ_TELEMETRY_DISABLE=${KHOJ_TELEMETRY_DISABLE:-True}
+    command: --host="0.0.0.0" --port=42110 -vv --anonymous-mode --non-interactive
+    networks:
+      - khoj
+    restart: unless-stopped
+
+volumes:
+  khoj_config:
+    name: khoj_config
+  khoj_db:
+    name: khoj_db
+  khoj_models:
+    name: khoj_models
+  khoj_search:
+    name: khoj_search
+
+networks:
+  khoj:
+    name: khoj_isolated
+    driver: bridge
