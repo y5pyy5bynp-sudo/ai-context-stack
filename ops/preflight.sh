@@ -48,38 +48,102 @@ check_docker() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. bash /dev/tcp port probes — never parse ss/netstat.
+# 2. iptables FORWARD (nft vs legacy). Never parse ss/netstat.
 # ---------------------------------------------------------------------------
-read_forward_policy() {
-  # Prints ACCEPT|DROP|... or returns non-zero if the binary cannot be queried.
+needs_forward_sudo() {
+  local err="$1"
+  [[ "${err}" == *"Permission denied"* \
+    || "${err}" == *"must be root"* \
+    || "${err}" == *"xtables.lock"* ]]
+}
+
+parse_forward_policy() {
+  printf '%s\n' "$1" | awk '/^-P FORWARD/ {print $3; exit}'
+}
+
+has_docker_forward_chains() {
+  local rules="$1"
+  printf '%s\n' "${rules}" | grep -q -- '-j DOCKER-USER' \
+    && printf '%s\n' "${rules}" | grep -q -- '-j DOCKER-FORWARD'
+}
+
+# Sets _fwd_policy, _fwd_rules, _fwd_via on success; _fwd_err on failure.
+# Must not run inside $() — those globals would be lost. Try unprivileged
+# first; retry sudo only for permission / lock errors.
+read_forward() {
   local bin="$1"
-  if [[ ! -x "${bin}" ]] && ! command -v "${bin}" >/dev/null 2>&1; then
+  _fwd_policy=""
+  _fwd_rules=""
+  _fwd_via=""
+  _fwd_err=""
+  if ! command -v "${bin}" >/dev/null 2>&1; then
+    _fwd_err="${bin} not on PATH"
     return 2
   fi
+
   local out rc=0
   set +e
   out="$("${bin}" -S FORWARD 2>&1)"
   rc=$?
   set -e
+  if [[ "${rc}" -eq 0 ]]; then
+    _fwd_policy="$(parse_forward_policy "${out}")"
+    if [[ -z "${_fwd_policy}" ]]; then
+      _fwd_err="${out}"
+      return 1
+    fi
+    _fwd_rules="${out}"
+    _fwd_via="plain"
+    return 0
+  fi
+
+  if ! needs_forward_sudo "${out}"; then
+    _fwd_err="${out}"
+    return 1
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    _fwd_err="${out}"
+    return 1
+  fi
+
+  set +e
+  out="$(sudo "${bin}" -S FORWARD 2>&1)"
+  rc=$?
+  set -e
   if [[ "${rc}" -ne 0 ]]; then
-    printf '%s\n' "${out}"
+    _fwd_err="${out}"
     return 1
   fi
-  local pol
-  pol="$(printf '%s\n' "${out}" | awk '/^-P FORWARD/ {print $3; exit}')"
-  if [[ -z "${pol}" ]]; then
-    printf '%s\n' "${out}"
+  _fwd_policy="$(parse_forward_policy "${out}")"
+  if [[ -z "${_fwd_policy}" ]]; then
+    _fwd_err="${out}"
     return 1
   fi
-  printf '%s\n' "${pol}"
+  _fwd_rules="${out}"
+  _fwd_via="sudo"
   return 0
+}
+
+# DROP is normal when Docker's own FORWARD jumps are installed.
+# Bare DROP with no Docker chains is still a black-hole.
+judge_drop_policy() {
+  local label="$1" policy="$2" rules="$3"
+  if [[ "${policy}" != "DROP" ]]; then
+    return 0
+  fi
+  if has_docker_forward_chains "${rules}"; then
+    ok "${label} FORWARD=DROP with DOCKER-USER/DOCKER-FORWARD (Docker-managed, ok)"
+    return 0
+  fi
+  note_fail "${label} FORWARD=DROP and Docker FORWARD chains are missing; bridge traffic will black-hole"
 }
 
 check_iptables_forward() {
   log "== iptables FORWARD (nft vs legacy)"
-  # Dual-backend hosts: nft FORWARD=ACCEPT + legacy FORWARD=DROP lets
-  # containers show Up while app-to-db traffic inside the bridge times out.
-  local nft="" legacy="" have_nft=0 have_legacy=0
+  # Dual-backend pitfall: nft FORWARD=ACCEPT + legacy FORWARD=DROP.
+  # WSL/Docker Desktop often has nft DROP + DOCKER-USER/DOCKER-FORWARD; that is ok.
+  local nft="" nft_rules="" legacy=""
+  local have_nft=0 have_legacy=0
 
   if command -v iptables-nft >/dev/null 2>&1; then
     have_nft=1
@@ -90,21 +154,12 @@ check_iptables_forward() {
 
   if (( have_nft == 0 && have_legacy == 0 )); then
     if command -v iptables >/dev/null 2>&1; then
-      local pol out rc=0
-      set +e
-      out="$(read_forward_policy iptables)"
-      rc=$?
-      set -e
-      if [[ "${rc}" -ne 0 ]]; then
-        note_fail "iptables exists but FORWARD policy cannot be read: ${out}"
+      if ! read_forward iptables; then
+        note_fail "iptables exists but FORWARD policy cannot be read: ${_fwd_err}"
         return 0
       fi
-      pol="${out}"
-      if [[ "${pol}" == "DROP" ]]; then
-        note_fail "iptables FORWARD policy is DROP; Docker bridge traffic will black-hole. Set ACCEPT on the backend Docker actually uses."
-        return 0
-      fi
-      ok "iptables FORWARD=${pol} (single backend)"
+      ok "iptables FORWARD=${_fwd_policy} (via ${_fwd_via})"
+      judge_drop_policy "iptables" "${_fwd_policy}" "${_fwd_rules}"
       return 0
     fi
     note_fail "neither iptables-nft, iptables-legacy, nor iptables is available; cannot verify FORWARD (refusing to skip)"
@@ -112,30 +167,22 @@ check_iptables_forward() {
   fi
 
   if (( have_nft == 1 )); then
-    local out rc=0
-    set +e
-    out="$(read_forward_policy iptables-nft)"
-    rc=$?
-    set -e
-    if [[ "${rc}" -ne 0 ]]; then
-      note_fail "iptables-nft is present but FORWARD policy cannot be read: ${out}"
+    if ! read_forward iptables-nft; then
+      note_fail "iptables-nft is present but FORWARD policy cannot be read: ${_fwd_err}"
     else
-      nft="${out}"
-      ok "iptables-nft FORWARD=${nft}"
+      nft="${_fwd_policy}"
+      nft_rules="${_fwd_rules}"
+      ok "iptables-nft FORWARD=${nft} (via ${_fwd_via})"
+      judge_drop_policy "iptables-nft" "${nft}" "${nft_rules}"
     fi
   fi
 
   if (( have_legacy == 1 )); then
-    local out rc=0
-    set +e
-    out="$(read_forward_policy iptables-legacy)"
-    rc=$?
-    set -e
-    if [[ "${rc}" -ne 0 ]]; then
-      note_fail "iptables-legacy is present but FORWARD policy cannot be read: ${out}"
+    if ! read_forward iptables-legacy; then
+      note_fail "iptables-legacy is present but FORWARD policy cannot be read: ${_fwd_err}"
     else
-      legacy="${out}"
-      ok "iptables-legacy FORWARD=${legacy}"
+      legacy="${_fwd_policy}"
+      ok "iptables-legacy FORWARD=${legacy} (via ${_fwd_via})"
     fi
   fi
 
@@ -294,14 +341,16 @@ check_pins() {
   fi
 }
 
-check_docker
-check_iptables_forward
-check_ports
-check_max_map_count
-check_mem_limit
-check_pins
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  check_docker
+  check_iptables_forward
+  check_ports
+  check_max_map_count
+  check_mem_limit
+  check_pins
 
-if (( FAILED != 0 )); then
-  die "preflight failed (see FAIL lines). Re-run after fixing; this script is idempotent."
+  if (( FAILED != 0 )); then
+    die "preflight failed (see FAIL lines). Re-run after fixing; this script is idempotent."
+  fi
+  ok "preflight passed"
 fi
-ok "preflight passed"
