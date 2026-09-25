@@ -58,13 +58,9 @@ for multi in /usr/sbin/xtables-nft-multi /usr/sbin/xtables-legacy-multi; do
   fi
 done
 
-# --- 3. Docker group + daemon config ---------------------------------------
+# --- 3. Docker group --------------------------------------------------------
 sudo groupadd -f docker
 sudo usermod -aG docker "$(id -un)" || true
-sudo mkdir -p /etc/docker
-if [[ ! -f /etc/docker/daemon.json ]]; then
-  echo '{ "storage-driver": "fuse-overlayfs", "iptables": true }' | sudo tee /etc/docker/daemon.json >/dev/null
-fi
 
 # --- 4. Bring the host up so we can pull images (reuses start logic) --------
 bash "${SELF_DIR}/agent-start.sh"

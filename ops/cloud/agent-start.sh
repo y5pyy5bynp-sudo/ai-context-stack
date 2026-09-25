@@ -42,14 +42,11 @@ else
     pgrep -x dockerd >/dev/null 2>&1 || break
     sleep 1
   done
-  sudo mkdir -p /etc/docker
-  if [[ ! -f /etc/docker/daemon.json ]]; then
-    echo '{ "storage-driver": "fuse-overlayfs", "iptables": true }' | sudo tee /etc/docker/daemon.json >/dev/null
-  fi
   # Log to a root-owned path: fs.protected_regular blocks writing logs into
-  # the sticky /tmp dir when the file is owned by another user.
+  # the sticky /tmp dir when the file is owned by another user. The
+  # fuse-overlayfs storage driver is required on the nested overlay rootfs.
   DOCKERD_LOG=/var/log/dockerd.log
-  sudo bash -c "setsid dockerd >${DOCKERD_LOG} 2>&1 < /dev/null &"
+  sudo bash -c "setsid dockerd --storage-driver fuse-overlayfs >${DOCKERD_LOG} 2>&1 < /dev/null &"
   for i in $(seq 1 60); do
     if sudo docker info >/dev/null 2>&1; then break; fi
     sleep 1
