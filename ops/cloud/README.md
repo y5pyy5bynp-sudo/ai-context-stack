@@ -6,25 +6,21 @@ Docker is not preinstalled and there is no systemd.
 
 | Script | Lifecycle | What it does |
 |--------|-----------|--------------|
-| `agent-install.sh` | once, at build/bootstrap (after checkout) | Verifies required tools and runs `make init-env` to create the gitignored `stacks/*/.env` files. |
+| `agent-install.sh` | once, at build/bootstrap (after checkout) | Installs Docker Engine + the Compose v2 plugin (if missing), grants the `iptables` binaries `CAP_NET_ADMIN,CAP_NET_RAW` so the pack's preflight can read the `FORWARD` policy as non-root, adds the agent user to the `docker` group, runs `make init-env` to create the gitignored `stacks/*/.env` files, and pre-pulls the RAGFlow + Khoj images (so they are baked into the environment build). |
 | `agent-start.sh` | every boot | Sets `vm.max_map_count=262144` (Elasticsearch), forces `iptables FORWARD=ACCEPT` on all backends, starts `dockerd` (fuse-overlayfs storage driver) if not already running, and makes the Docker socket usable by the agent user. Does **not** start the heavy compose stacks. |
 
 Both scripts are idempotent and safe to re-run.
 
 ## Base image expectations
 
-The scripts assume the VM's base image/snapshot already provides:
+`agent-install.sh` is self-contained and works on top of Cursor's default
+Ubuntu base image: it installs Docker itself. The base only needs:
 
-- Docker Engine + the Compose v2 plugin (`docker`, `docker compose`)
-- `fuse-overlayfs` and `/dev/fuse` (rootful Docker on a nested overlay rootfs)
-- `CAP_NET_ADMIN,CAP_NET_RAW` file capabilities on the `iptables` backends so
-  the pack's preflight can read the `FORWARD` policy as a non-root user:
-  ```bash
-  sudo setcap 'cap_net_admin,cap_net_raw+ep' /usr/sbin/xtables-nft-multi
-  sudo setcap 'cap_net_admin,cap_net_raw+ep' /usr/sbin/xtables-legacy-multi
-  ```
-- The `ubuntu` user in the `docker` group
-- Pre-pulled RAGFlow/Khoj images (optional but avoids a large first-run pull)
+- A Debian/Ubuntu userland with `sudo`, `apt-get`, `curl` and network egress
+  to `download.docker.com`, Docker Hub and `ghcr.io`.
+- `/dev/fuse` available (rootful Docker uses the `fuse-overlayfs` storage
+  driver because the rootfs is itself an overlay mount). There is no systemd,
+  so `dockerd` is launched directly by `agent-start.sh`.
 
 ## Running the apps
 
